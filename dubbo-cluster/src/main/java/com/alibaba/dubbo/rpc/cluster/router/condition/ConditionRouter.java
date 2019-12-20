@@ -41,6 +41,11 @@ import java.util.regex.Pattern;
 /**
  * ConditionRouter
  *
+ * 服务目录在刷新 Invoker 列表的过程中，会通过 Router 进行服务路由，筛选出符合路由规则的服务提供者。
+ * 在详细分析服务路由的源码之前，先来介绍一下服务路由是什么。服务路由包含一条路由规则，路由规则决定了服务消费者的调用目标，
+ * 即规定了服务消费者可调用哪些服务提供者。Dubbo 目前提供了三种服务路由实现，分别为条件路由 ConditionRouter、
+ * 脚本路由 ScriptRouter 和标签路由 TagRouter。其中条件路由是我们最常使用的，标签路由是一个新的实现，暂时还未发布，
+ * 该实现预计会在 2.7.x 版本中发布。本篇文章将分析条件路由相关源码，脚本路由和标签路由这里就不分析了。
  */
 public class ConditionRouter implements Router, Comparable<Router> {
 
@@ -54,20 +59,30 @@ public class ConditionRouter implements Router, Comparable<Router> {
 
     public ConditionRouter(URL url) {
         this.url = url;
+        // 获取 priority 和 force 配置
         this.priority = url.getParameter(Constants.PRIORITY_KEY, 0);
         this.force = url.getParameter(Constants.FORCE_KEY, false);
         try {
+            // 获取路由规则
             String rule = url.getParameterAndDecoded(Constants.RULE_KEY);
             if (rule == null || rule.trim().length() == 0) {
                 throw new IllegalArgumentException("Illegal route rule!");
             }
             rule = rule.replace("consumer.", "").replace("provider.", "");
+            // 定位 => 分隔符
             int i = rule.indexOf("=>");
+            // 分别获取服务消费者和提供者匹配规则
             String whenRule = i < 0 ? null : rule.substring(0, i).trim();
             String thenRule = i < 0 ? rule.trim() : rule.substring(i + 2).trim();
-            Map<String, MatchPair> when = StringUtils.isBlank(whenRule) || "true".equals(whenRule) ? new HashMap<String, MatchPair>() : parseRule(whenRule);
-            Map<String, MatchPair> then = StringUtils.isBlank(thenRule) || "false".equals(thenRule) ? null : parseRule(thenRule);
-            // NOTE: It should be determined on the business level whether the `When condition` can be empty or not.
+            // 解析服务消费者匹配规则
+            Map<String, MatchPair> when =
+                    StringUtils.isBlank(whenRule) || "true".equals(whenRule)
+                            ? new HashMap<String, MatchPair>() : parseRule(whenRule);
+            // 解析服务提供者匹配规则
+            Map<String, MatchPair> then =
+                    StringUtils.isBlank(thenRule) || "false".equals(thenRule)
+                            ? null : parseRule(thenRule);
+            // 将解析出的匹配规则分别赋值给 whenCondition 和 thenCondition 成员变量
             this.whenCondition = when;
             this.thenCondition = then;
         } catch (ParseException e) {
